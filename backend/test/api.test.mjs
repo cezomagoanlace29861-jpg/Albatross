@@ -480,17 +480,25 @@ test("the app's own files: only the administrator publishes them; anyone reads t
 });
 
 test("subscriptions for other devices: one address per account, servers by country, void after a password change", async () => {
-  const put = fetch(BASE + "/api/v1/admin/list/servers/hot.txt", {
-    method: "PUT", headers: { Authorization: "Bearer " + admin, "Content-Type": "text/plain" },
-    // The fourth link is one the engine refuses: no subscription carries it.
-    body: "vless://11111111-2222-4333-8444-555555555555@b.example.com:443?security=tls&type=ws&path=%2Fws#Germany-1\n" +
-      "trojan://p@h.example.com:443#US%20%F0%9F%87%BA%F0%9F%87%B8%20fast\nss://YWVzLTI1Ni1nY206cGFzcw@h.example.com:8388#no-country\n" +
-      "vless://a@b:443#France-1\n",
-  });
-  assert.equal((await put).status, 200);
   const c = await call("POST", "admin/users", { token: admin, body: { username: "subscriber", password: "sub-pass-1234", quota_bytes: 100 * GB } });
   assert.equal(c.status, 201);
   let token = (await call("POST", "login", { body: { username: "subscriber", password: "sub-pass-1234" } })).body.token;
+  // Accounts get only the proven list (cmd/collect/proven.go): a hot list
+  // alone, servers nobody proved from inside, gives them nothing.
+  const lists = (name, body) => fetch(BASE + "/api/v1/admin/list/servers/" + name, {
+    method: "PUT", headers: { Authorization: "Bearer " + admin, "Content-Type": "text/plain" }, body,
+  });
+  assert.equal((await lists("hot.txt", "vless://11111111-2222-4333-8444-555555555555@u.example.com:443?security=tls&type=ws&path=%2Fws#Finland-1\n")).status, 200);
+  assert.deepEqual((await call("GET", "servers", { token })).body.servers, [], "no proven list: no servers");
+  assert.equal((await call("GET", "sub", { token })).body.servers, 0);
+  assert.equal((await call("GET", "admin/stats", { token: admin })).body.servers.proven, 0);
+  const put = lists("proven.txt",
+    // The fourth link is one the engine refuses: no subscription carries it.
+    "vless://11111111-2222-4333-8444-555555555555@b.example.com:443?security=tls&type=ws&path=%2Fws#Germany-1\n" +
+      "trojan://p@h.example.com:443#US%20%F0%9F%87%BA%F0%9F%87%B8%20fast\nss://YWVzLTI1Ni1nY206cGFzcw@h.example.com:8388#no-country\n" +
+      "vless://a@b:443#France-1\n");
+  assert.equal((await put).status, 200);
+  assert.equal((await call("GET", "admin/stats", { token: admin })).body.servers.proven, 4, "the administrator sees the count");
   assert.equal((await call("GET", "sub")).status, 401, "signed-in users only");
   const info = await call("GET", "sub", { token });
   assert.equal(info.status, 200);

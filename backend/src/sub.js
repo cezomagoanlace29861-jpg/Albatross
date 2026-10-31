@@ -258,7 +258,37 @@ export async function listFile(env, name) {
   return up.ok ? up.text() : "";
 }
 
-export const hotList = (env) => listFile(env, "hot.txt");
+/**
+ * The only servers accounts are given: the collector's proven list
+ * (cmd/collect/proven.go), the servers it tested with fresh evidence from
+ * inside Iran that they are healthy there (a tester on an Iranian line
+ * connected through them, or Globalping's probes there reached them, both
+ * within three hours). Nothing else is offered, not even when it is
+ * missing or empty: the accounts then get no servers of the lists, and the
+ * apps still have WARP, Psiphon and Tor, and the edge on the plans with it.
+ */
+export const PROVEN_LIST = "proven.txt";
+export const provenList = (env) => listFile(env, PROVEN_LIST);
+
+/**
+ * How many servers the proven list holds, what proved them and when the
+ * collector wrote it (meta.json), for the administrator: an empty list
+ * means accounts get none.
+ */
+export async function provenStatus(env) {
+  const [text, metaText] = await Promise.all([provenList(env), listFile(env, "meta.json")]);
+  let meta = {};
+  try {
+    meta = JSON.parse(metaText || "{}") || {};
+  } catch {}
+  const from = meta.proven_from && typeof meta.proven_from === "object" ? meta.proven_from : {};
+  return {
+    proven: parseList(text).length,
+    by: typeof meta.proven_by === "string" ? meta.proven_by : "",
+    from: Object.fromEntries(Object.entries(from).filter(([k, v]) => /^[a-z]{1,20}$/.test(k) && Number.isSafeInteger(v))),
+    updated: typeof meta.updated === "string" ? meta.updated : "",
+  };
+}
 
 /** When the lists were last published (meta.json), as an ISO time, or "". */
 export async function listUpdated(env) {
@@ -282,22 +312,20 @@ export function cleanEntry(e) {
 
 /**
  * The servers a subscription offers right now (pool), each in the standard
- * form. pick draws the top-up from the fresh list: a seeded one (dayPick)
- * keeps the pool, and so each account's slice, the same all day.
+ * form: the proven list's (PROVEN_LIST), with no top-up from lists nobody
+ * tested from inside. pick is kept for the pool's draw (dayPick keeps it,
+ * and so each account's slice, the same all day).
  */
 export async function subPool(env, pick = Math.random) {
-  // Only servers the collector connected through and measured (hot.txt):
-  // no top-up from lists nobody has tested.
-  return pool(await listFile(env, "hot.txt"), "", SUB_MIN, pick, cleanEntry);
+  return pool(await provenList(env), "", SUB_MIN, pick, cleanEntry);
 }
 
 /**
- * The servers the apps are offered a slice of: the same pool as a
+ * The servers the apps are offered a slice of: the same proven list as a
  * subscription's, in every protocol the app reads, the links as they came.
  */
 export async function appPool(env, pick = Math.random) {
-  // Only servers the collector connected through and measured (hot.txt).
-  return pool(await listFile(env, "hot.txt"), "", SUB_MIN, pick, (e) => e, () => true);
+  return pool(await provenList(env), "", SUB_MIN, pick, (e) => e, () => true);
 }
 
 // ---------- Each account's slice ----------
@@ -442,10 +470,10 @@ export function slice(entries, seed, cap = SLICE_MAX, base = SLICE_BASE) {
 // What gets through when only approved sites do (an allowlist): servers
 // reached through the CDN, on Cloudflare's own addresses. A slice of the
 // best-tested servers holds few of them, so each account also gets its own
-// share of them from the wider lists, the same all day.
+// share of them, the same all day.
 export const SLICE_RESIST = 60;
-// Tested servers only: the collector connected through each and measured it.
-const RESIST_LISTS = ["hot.txt"];
+// From the proven list only, like the rest of what an account gets.
+const RESIST_LISTS = [PROVEN_LIST];
 
 /** An account's share of the servers reached through the CDN, apart from those it already has. */
 export async function resistantFor(env, userId, t, have, n = SLICE_RESIST) {

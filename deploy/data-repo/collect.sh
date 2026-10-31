@@ -70,18 +70,22 @@ mkdir -p "$tmp/tools"
 for arch in amd64 arm64; do
   CGO_ENABLED=0 GOARCH=$arch go build -trimpath -buildvcs=false -ldflags "-s -w" -o "$tmp/tools/collect-linux-$arch" ./cmd/collect
 done
+# Its installer and the cores, so a tester inside the country needs nothing from GitHub.
+cp deploy/tester/install.sh "$tmp/tools/tester-install.sh"
+cp "$tmp/cores/sing-box" "$tmp/tools/sing-box-linux-amd64"
+cp "$tmp/cores/xray" "$tmp/tools/xray-linux-amd64"
 
 account="$(bash build/account-url.sh | cut -d, -f1)"
 echo "::add-mask::$account"
 files=()
-for f in hot.txt new.txt fresh.txt all-1.txt all-2.txt all-3.txt all-4.txt all-5.txt all-6.txt all-7.txt all-8.txt own-0.bin own-1.bin own-2.bin own-3.bin own-4.bin; do
+for f in hot.txt proven.txt new.txt fresh.txt all-1.txt all-2.txt all-3.txt all-4.txt all-5.txt all-6.txt all-7.txt all-8.txt own-0.bin own-1.bin own-2.bin own-3.bin own-4.bin; do
   [ -f "$tmp/servers/$f.sealed" ] && files+=("$tmp/servers/$f.sealed")
 done
 for f in tor.json meta.json iran-tcp.json reach.json; do
   [ -f "$tmp/servers/$f" ] && files+=("$tmp/servers/$f")
 done
 bash deploy/files/publish-lists.sh "$account" servers "${files[@]}" >/dev/null || { echo "::error::publishing to the project's storage failed"; exit 1; }
-bash deploy/files/publish-lists.sh "$account" tools "$tmp"/tools/collect-linux-* >/dev/null
+bash deploy/files/publish-lists.sh "$account" tools "$tmp"/tools/* >/dev/null
 echo "published ${#files[@]} files to the project's storage"
 
 # The public branch: the sealed lists and nothing else, one commit

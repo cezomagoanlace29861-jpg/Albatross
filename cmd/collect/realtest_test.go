@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -187,16 +191,130 @@ func TestCheckIranUsesItsCache(t *testing.T) {
 	// Nothing left to ask, and no edge addresses either: no probe is used.
 	defer func(n int) { edgeChecks = n }(edgeChecks)
 	edgeChecks = 0
-	kept, checked, open := checkIran([]*entry{a, bb, c}, dir, dir)
-	if got := links(kept); len(got) != 2 || got[0] != bb.link || got[1] != c.link {
+	r := checkIran([]*entry{a, bb, c}, dir, dir)
+	if got := links(r.hot); len(got) != 2 || got[0] != bb.link || got[1] != c.link {
 		t.Fatalf("kept %v", got)
 	}
-	if checked != 2 || open != 1 {
-		t.Fatalf("checked %d open %d", checked, open)
+	if r.checkable != 2 || r.fresh != 2 || r.open != 1 || r.asked != 0 {
+		t.Fatalf("checkable %d fresh %d open %d asked %d", r.checkable, r.fresh, r.open, r.asked)
 	}
 	saved := loadIranCache(dir)
 	if _, ok := saved["d:1"]; ok || len(saved) != 2 {
 		t.Fatalf("saved %v", saved)
+	}
+}
+
+// The quota is short: the fixed edge addresses are asked first, then the
+// hot addresses in hot order up to the budget, then the sampled edges. An
+// answer is asked for again before it runs out (iranRecheck), and the one
+// before it moves into the history. A server reached through Cloudflare is
+// not asked about, and not left out for what its own address did.
+func TestCheckIranAsksInOrder(t *testing.T) {
+	t.Setenv("GLOBALPING_TAGS", "")
+	t.Setenv("GLOBALPING_TOKEN", "")
+	var mu sync.Mutex
+	asked := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			asked[body["target"].(string)] = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprintf(w, `{"id":%q}`, body["target"])
+			return
+		}
+		fmt.Fprint(w, `{"status":"finished","results":[`+strings.Repeat(`{"result":{"status":"finished","timings":[{"rtt":90},{"rtt":95},{"rtt":90},{"rtt":95}],"stats":{"total":4,"rcv":4}}},`, gpMinProbes-1)+
+			`{"result":{"status":"finished","timings":[{"rtt":90},{"rtt":95},{"rtt":90},{"rtt":95}],"stats":{"total":4,"rcv":4}}}]}`)
+	}))
+	defer srv.Close()
+	defer func(api string, poll time.Duration, n int, fixed []string, sample func() []string, lookup func(context.Context, string) ([]string, error)) {
+		globalpingAPI, gpPoll, edgeChecks, edgeAddrs, sampleEdges, lookupHost = api, poll, n, fixed, sample, lookup
+	}(globalpingAPI, gpPoll, edgeChecks, edgeAddrs, sampleEdges, lookupHost)
+	globalpingAPI, gpPoll = srv.URL+"/v1/measurements", time.Millisecond
+	edgeChecks, edgeAddrs = 3, []string{"104.16.0.1", "104.16.0.2"}
+	sampleEdges = func() []string { return []string{"104.16.0.1", "104.16.9.9", "104.16.9.10"} }
+	lookupHost = func(context.Context, string) ([]string, error) { return nil, fmt.Errorf("no lookups here") }
+
+	dir := t.TempDir()
+	now := time.Now()
+	var hot []*entry
+	for i := 0; i < iranChecks()+5; i++ {
+		host := fmt.Sprintf("10.1.%d.%d", i/250, i%250)
+		hot = append(hot, &entry{link: "vless://b831381d-6324-4d53-ad4f-8cda48b30811@" + host + ":443?type=tcp#h", endpoint: host + ":443"})
+	}
+	// Answered a minute ago: not asked again. Answered past iranRecheck:
+	// asked again, the old answer kept as history.
+	cache := map[string]iranSeen{
+		hot[0].endpoint: {Open: true, At: now.Add(-time.Minute).Unix()},
+		hot[1].endpoint: {Open: true, At: now.Add(-iranRecheck - time.Minute).Unix(), Probes: 2},
+	}
+	cdn := &entry{link: "vless://b831381d-6324-4d53-ad4f-8cda48b30811@104.17.1.1:443?type=ws&security=tls&host=cdn.example.com&sni=cdn.example.com&path=%2F#c", endpoint: "104.17.1.1:443"}
+	cache[cdn.endpoint] = iranSeen{Open: false, At: now.Add(-time.Minute).Unix()}
+	hot = append([]*entry{cdn}, hot...)
+	b, _ := json.Marshal(cache)
+	os.WriteFile(filepath.Join(dir, iranCacheName), b, 0o644)
+
+	r := checkIran(hot, dir, dir)
+	if asked["104.17.1.1"] || !r.cdn[cdn] {
+		t.Fatalf("the server behind Cloudflare was asked about (marked %v)", r.cdn[cdn])
+	}
+	kept := false
+	for _, e := range r.hot {
+		kept = kept || e == cdn
+	}
+	if !kept {
+		t.Fatal("the server behind Cloudflare was left out for its own address's answer")
+	}
+	if asked["10.1.0.0"] || !asked["10.1.0.1"] {
+		t.Fatal("a fresh answer was asked for again, or a nearly spent one was not")
+	}
+	budget := iranChecks()
+	for i, e := range hot[1:] {
+		host := e.endpoint[:len(e.endpoint)-4]
+		// hot[1:][0] had a fresh answer, so the budget reaches one further.
+		if want := i >= 1 && i <= budget; asked[host] != want {
+			t.Fatalf("hot address %d asked %v, want %v", i, asked[host], want)
+		}
+	}
+	for _, edge := range []string{"104.16.0.1", "104.16.0.2", "104.16.9.9"} {
+		if !asked[edge] {
+			t.Fatalf("edge %s not asked (%d asked)", edge, len(asked))
+		}
+	}
+	if asked["104.16.9.10"] {
+		t.Fatal("more edge addresses asked than edgeChecks")
+	}
+	if r.asked != budget+3 || r.checkable != len(hot)-1 || r.fresh != budget+1 {
+		t.Fatalf("asked %d, checkable %d, fresh %d", r.asked, r.checkable, r.fresh)
+	}
+	again := r.answers[hot[2].endpoint]
+	if !again.Open || again.Probes != gpMinProbes || again.RTT != 92.5 || again.Jitter != 5 || len(again.Hist) != 1 || !again.Hist[0].Open {
+		t.Fatalf("re-asked address: %+v", again)
+	}
+	// The cache on disk has the new answers and the history.
+	if saved := loadIranCache(dir); len(saved[hot[2].endpoint].Hist) != 1 {
+		t.Fatalf("saved %+v", saved[hot[2].endpoint])
+	}
+}
+
+// A record keeps its last iranHistory answers before the latest, and none
+// older than iranKeep.
+func TestIranHistory(t *testing.T) {
+	now := time.Now()
+	var s iranSeen
+	for i := 0; i < iranHistory+3; i++ {
+		s = s.next(gpAnswer{open: i%2 == 0, probes: 2, rtt: 100.04, jitter: -1}, now.Add(time.Duration(i)*time.Hour))
+	}
+	if len(s.Hist) != iranHistory || s.Hist[0].At != now.Add(time.Duration(iranHistory+1)*time.Hour).Unix() || s.RTT != 100 || s.Jitter != -1 {
+		t.Fatalf("%+v", s)
+	}
+	dir := t.TempDir()
+	cache := map[string]iranSeen{"x:1": {Open: true, At: now.Unix(), Hist: []iranPast{{true, now.Add(-time.Hour).Unix()}, {true, now.Add(-iranKeep - time.Hour).Unix()}}}}
+	saveIranCache(dir, cache, now)
+	if got := loadIranCache(dir)["x:1"]; len(got.Hist) != 1 {
+		t.Fatalf("kept %+v", got)
 	}
 }
 

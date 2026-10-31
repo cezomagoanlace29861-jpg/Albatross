@@ -7,7 +7,7 @@ import {
 import { LIST_PATH, MAX_LIST, pullFile, putList, serveFile, serveList } from "./files.js";
 import { armor, httpsRedirect, securityTxt } from "./headers.js";
 import { singBoxConfig, wantsSingBox } from "./singbox.js";
-import { appLinks, appPool, resistantFor, sliceSize, build as buildSub, countriesOf, dayPick, edgeFor, headers as subHeaders, listUpdated, readSubToken, SLICE_COUNTRY, SLICE_MAX, sliceFor, storedListKeys, subPool, subToken } from "./sub.js";
+import { appLinks, appPool, provenStatus, resistantFor, sliceSize, build as buildSub, countriesOf, dayPick, edgeFor, headers as subHeaders, listUpdated, readSubToken, SLICE_COUNTRY, SLICE_MAX, sliceFor, storedListKeys, subPool, subToken } from "./sub.js";
 import { chat as supportChat, close as supportClose, withCors as supportCors } from "./support.js";
 import { refreshRates } from "./fx.js";
 import { MAX_GB, MIN_GB, MONTHS, SALES_DEFAULTS, SALES_RANGE, catalog as salesCatalog, config as salesConfig, parseSteps } from "./sales.js";
@@ -621,6 +621,7 @@ async function servers(request, env) {
   if (await blocked(env, key, SERVERS_PER_HOUR, 3600)) throw tooMany();
   await count(env, key, 3600);
   const entries = await appPool(env, dayPick(t));
+  if (!entries.length) noProven();
   // A higher plan gets more servers (sub.js SLICE_TIERS).
   const size = sliceSize(a.tier, entries.length);
   const base = await sliceFor(env, user.id, entries, t, size.max, size.base);
@@ -628,6 +629,16 @@ async function servers(request, env) {
   // still gets out when the network lets only approved sites through.
   const resist = await resistantFor(env, user.id, t, base, size.resist);
   return json({ servers: appLinks([...base, ...resist]), reason: "" });
+}
+
+// An empty proven list leaves every account without the lists' servers:
+// said in the Worker's log (wrangler tail), at most every ten minutes per
+// isolate; the administrator's overview shows the count (adminStats).
+let noProvenSaid = 0;
+function noProven() {
+  if (Date.now() - noProvenSaid < 600_000) return;
+  noProvenSaid = Date.now();
+  console.warn("servers: the proven list (list/servers/proven.txt) is missing or empty; accounts get none of the lists' servers");
 }
 
 /**
@@ -879,7 +890,8 @@ async function adminStats(request, env) {
        COALESCE(SUM(CASE WHEN last_seen > ?2 THEN 1 ELSE 0 END), 0) AS active_month,
        COALESCE(SUM(total_bytes), 0) AS total_bytes, COALESCE(SUM(total_seconds), 0) AS total_seconds FROM users`,
   ).bind(t - DAY, t - 30 * DAY).first();
-  return json(row);
+  // The servers accounts are given (sub.js PROVEN_LIST): none when it is empty.
+  return json({ ...row, servers: await provenStatus(env).catch(() => null) });
 }
 
 async function adminList(request, env, url) {

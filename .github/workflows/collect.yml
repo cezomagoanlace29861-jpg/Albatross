@@ -154,6 +154,10 @@ jobs:
           # install.sh carries run.sh inline: the two must not drift apart.
           diff <(sed -n "/^cat > run.sh <<'RUN'$/,/^RUN$/{//!p}" deploy/tester/install.sh) deploy/tester/run.sh
           cp deploy/tester/install.sh "$RUNNER_TEMP/tools/tester-install.sh"
+          # The cores too, so a tester inside the country needs nothing from GitHub.
+          [ -x /tmp/cores/sing-box ] && cp /tmp/cores/sing-box "$RUNNER_TEMP/tools/sing-box-linux-amd64"
+          [ -x /tmp/cores/xray ] && cp /tmp/cores/xray "$RUNNER_TEMP/tools/xray-linux-amd64"
+          true
       - name: Publish
         working-directory: ${{ runner.temp }}/servers
         run: |
@@ -176,15 +180,15 @@ jobs:
         run: |
           account="$(bash build/account-url.sh | cut -d, -f1)"
           files=()
-          for f in hot.txt new.txt fresh.txt all-1.txt all-2.txt all-3.txt all-4.txt all-5.txt all-6.txt all-7.txt all-8.txt tor.json meta.json iran-tcp.json reach.json own-0.bin own-1.bin own-2.bin own-3.bin own-4.bin; do
+          for f in hot.txt proven.txt new.txt fresh.txt all-1.txt all-2.txt all-3.txt all-4.txt all-5.txt all-6.txt all-7.txt all-8.txt tor.json meta.json iran-tcp.json reach.json own-0.bin own-1.bin own-2.bin own-3.bin own-4.bin; do
             [ -f "$RUNNER_TEMP/servers/$f" ] && files+=("$RUNNER_TEMP/servers/$f")
             [ -f "$RUNNER_TEMP/servers/$f.sealed" ] && files+=("$RUNNER_TEMP/servers/$f.sealed")
           done
           bash deploy/files/publish-lists.sh "$account" servers "${files[@]}"
-          bash deploy/files/publish-lists.sh "$account" tools "$RUNNER_TEMP"/tools/collect-linux-*
+          bash deploy/files/publish-lists.sh "$account" tools "$RUNNER_TEMP"/tools/*
           # Without plain copies, the stale plain lists in storage go too.
           if [ "${LISTS_PLAIN:-0}" != 1 ] && [ -n "$CLOUDFLARE_API_TOKEN" ]; then
-            for f in hot.txt new.txt fresh.txt all-1.txt all-2.txt all-3.txt all-4.txt all-5.txt all-6.txt all-7.txt all-8.txt own-0.bin own-1.bin own-2.bin own-3.bin own-4.bin; do
+            for f in hot.txt proven.txt new.txt fresh.txt all-1.txt all-2.txt all-3.txt all-4.txt all-5.txt all-6.txt all-7.txt all-8.txt own-0.bin own-1.bin own-2.bin own-3.bin own-4.bin; do
               (cd backend && npx wrangler r2 object delete "albatross-files/list/servers/$f" --remote >/dev/null 2>&1) || true
             done
           fi

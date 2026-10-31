@@ -1,54 +1,104 @@
 #!/usr/bin/env bash
 # Sets up a tester inside the country: a machine on an Iranian network that
-# connects through the candidate servers for real, every two hours, and
-# reports which ones work from here. The collector abroad cannot see the
-# filtering; this machine can. Its report (list/servers/iran.json) puts the
-# servers confirmed from inside first in hot.txt and leaves the failing ones
-# out; while it is fresh and confirms enough servers, hot.txt holds only
-# confirmed servers, and this machine publishes hot.txt itself as well, so
-# the apps get it at once.
+# connects through the servers for real and reports which ones work from
+# here (list/servers/iran.json). The collector abroad cannot see the
+# filtering; this machine can. The servers it confirms are proven for the
+# accounts (cmd/collect/proven.go) and come first in hot.txt.
 #
-#   curl -fsSL https://accounts.example.com/list/tools/tester-install.sh -o install.sh
-#   sudo ACCOUNT_URL=https://accounts.example.com ADMIN_USER=... ADMIN_PASSWORD=... bash install.sh
+# One command, on Ubuntu or Debian, also Ubuntu in WSL on Windows, on the
+# internet as an ordinary user here has it: no VPN, no proxy.
 #
-# Needs Ubuntu 22.04/24.04 or Debian 12, x86-64 or ARM64, with internet
-# access as an ordinary user here has (that is the point). Optional:
-#   EVERY=2h        how often to test (systemd OnUnitActiveSec form)
-#   REAL=1500       how many servers to connect through per run
-#   CORES_URL=...   where to get the cores' archives if GitHub is not reachable
+#   curl -fsSL https://accounts.albatrossvpn.online/list/tools/tester-install.sh | sudo bash
+#
+# It asks for the account service's administrator unless ADMIN_USER and
+# ADMIN_PASSWORD are set. Everything it downloads comes from the project's
+# own storage; GitHub is only the fallback for the cores. Optional:
+#   ACCOUNT_URL=...  the account service (default: the project's)
+#   EVERY=2h         how often to test (s, m or h)
+#   REAL=600         how many servers to connect through per run
+#   CORES_URL=...    another place for the cores' release archives
 set -euo pipefail
-: "${ACCOUNT_URL:?set ACCOUNT_URL to the account service, e.g. https://accounts.example.com}"
-: "${ADMIN_USER:?set ADMIN_USER}"
-: "${ADMIN_PASSWORD:?set ADMIN_PASSWORD}"
+# What it measures is this network as it is: never through a VPN or proxy.
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
+ACCOUNT_URL="${ACCOUNT_URL:-https://accounts.albatrossvpn.online}"
+ACCOUNT_URL="${ACCOUNT_URL%/}"
 EVERY="${EVERY:-2h}"
-REAL="${REAL:-1500}"
+REAL="${REAL:-600}"
 SINGBOX_VERSION="${SINGBOX_VERSION:-1.14.4}"
 XRAY_VERSION="${XRAY_VERSION:-26.10.21}"
 dir=/opt/albatross-tester
-arch="$(uname -m)"
-case "$arch" in
+say() { printf '%s\n' "$*"; }
+fail() { printf 'Albatross tester: %s\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || fail "run it with sudo (copy the whole command again)."
+case "$(uname -m)" in
   x86_64) goarch=amd64; sbarch=amd64; xarch=64 ;;
   aarch64|arm64) goarch=arm64; sbarch=arm64; xarch=arm64-v8a ;;
-  *) echo "unsupported machine: $arch" >&2; exit 1 ;;
+  *) fail "this machine ($(uname -m)) is not supported; it needs x86-64 or ARM64." ;;
+esac
+case "$EVERY" in
+  *h) every=$(( ${EVERY%h} * 3600 )) ;;
+  *m) every=$(( ${EVERY%m} * 60 )) ;;
+  *s) every=${EVERY%s} ;;
+  *) every=$EVERY ;;
+esac
+[ "$every" -ge 600 ] 2>/dev/null || fail "EVERY must be at least 10 minutes."
+
+# A base Ubuntu has these; only what is missing is installed.
+missing=""
+for t in curl python3 tar flock; do command -v "$t" > /dev/null || missing="$missing $t"; done
+if [ -n "$missing" ]; then
+  say "Installing:$missing"
+  pkgs="${missing/flock/util-linux}"
+  { apt-get update -q && apt-get install -y -q $pkgs; } > /dev/null 2>&1 || fail "could not install$missing; install them and run the command again."
+fi
+
+get() { # url file
+  curl -fsSL --retry 5 --retry-delay 3 --connect-timeout 20 --max-time 900 -o "$2" "$1"
+}
+
+# The administrator of the account service: the tester signs in with it to
+# open the lists and to publish its report. Asked here, kept on this machine.
+if [ -z "${ADMIN_USER:-}" ] || [ -z "${ADMIN_PASSWORD:-}" ]; then
+  [ -r /dev/tty ] || fail "set ADMIN_USER and ADMIN_PASSWORD (no terminal to ask in)."
+  [ -n "${ADMIN_USER:-}" ] || read -r -p "Administrator username: " ADMIN_USER < /dev/tty
+  if [ -z "${ADMIN_PASSWORD:-}" ]; then
+    read -r -s -p "Administrator password: " ADMIN_PASSWORD < /dev/tty
+    printf '\n' > /dev/tty
+  fi
+fi
+login="$(ADMIN_USER="$ADMIN_USER" ADMIN_PASSWORD="$ADMIN_PASSWORD" python3 -c 'import json, os; print(json.dumps({"username": os.environ["ADMIN_USER"], "password": os.environ["ADMIN_PASSWORD"]}))')"
+code="$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 --connect-timeout 20 --max-time 60 -H 'Content-Type: application/json' --data "$login" "$ACCOUNT_URL/api/v1/admin/login" || true)"
+case "$code" in
+  200) say "Signed in to the account service." ;;
+  000) fail "the account service cannot be reached from this network right now; try again later." ;;
+  *) fail "the account service did not accept that username and password ($code)." ;;
 esac
 
-apt-get update -q
-apt-get install -y -q curl jq unzip ca-certificates > /dev/null
 mkdir -p "$dir/cores" "$dir/work"
 cd "$dir"
 
 # The collector, built by CI and kept in the project's own storage.
-curl -fsSL --retry 4 -o collect "$ACCOUNT_URL/list/tools/collect-linux-$goarch"
+say "Downloading the tester..."
+get "$ACCOUNT_URL/list/tools/collect-linux-$goarch" collect || fail "could not download the tester from the account service."
 chmod +x collect
-./collect -h > /dev/null 2>&1 || { echo "the collector does not run here" >&2; exit 1; }
+./collect -h > /dev/null 2>&1 || fail "the tester does not run on this machine."
 
-# The cores it connects with.
-gh="${CORES_URL:-https://github.com}"
-curl -fsSL --retry 4 -o sb.tgz "$gh/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-${sbarch}.tar.gz"
-tar xzf sb.tgz --strip-components=1 -C cores && rm sb.tgz
-curl -fsSL --retry 4 -o x.zip "$gh/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-${xarch}.zip"
-unzip -oq x.zip xray -d cores && rm x.zip
+# The cores it connects with: from the project's own storage, the release
+# archives (GitHub or CORES_URL) only if that fails.
+say "Downloading the connection cores..."
+if get "$ACCOUNT_URL/list/tools/sing-box-linux-$goarch" cores/sing-box && get "$ACCOUNT_URL/list/tools/xray-linux-$goarch" cores/xray; then
+  :
+else
+  gh="${CORES_URL:-https://github.com}"
+  get "$gh/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-${sbarch}.tar.gz" sb.tgz &&
+    tar xzf sb.tgz --strip-components=1 -C cores && rm -f sb.tgz &&
+    get "$gh/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-${xarch}.zip" x.zip &&
+    python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract("xray", sys.argv[2])' x.zip cores && rm -f x.zip ||
+    fail "could not download the connection cores."
+fi
 chmod +x cores/sing-box cores/xray
+cores/sing-box version > /dev/null 2>&1 || fail "the sing-box core does not run on this machine."
 
 # The settings, for run.sh: shell-quoted, so a password with any
 # character in it reaches the account service as it is, and readable by
@@ -67,9 +117,11 @@ cat > run.sh <<'RUN'
 # fetches the candidates (the current hot.txt and the top of fresh.txt, as
 # the collector publishes them: sealed), connects through them for real
 # from here, twice, and publishes the report (servers/iran.json) and, when
-# enough servers were confirmed, hot.txt.
+# enough servers were confirmed, hot.txt. It goes out on the network as it
+# is, never through a VPN or a proxy: that network is what it measures.
 set -euo pipefail
 cd "$(dirname "$0")"
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 # The settings install.sh wrote, shell-quoted so any password works.
 if [ -f ./env ]; then . ./env; fi
 : "${ACCOUNT_URL:?}" "${ADMIN_USER:?}" "${ADMIN_PASSWORD:?}"
@@ -78,11 +130,11 @@ work=work
 rm -rf "$work" && mkdir -p "$work/in"
 
 # Signed in as the administrator: for the keys that open the sealed lists,
-# and later to publish.
-token="$(curl -fsS --retry 3 --max-time 60 -H 'Content-Type: application/json' \
-  --data "$(jq -cn --arg u "$ADMIN_USER" --arg p "$ADMIN_PASSWORD" '{username:$u,password:$p}')" \
-  "$account/api/v1/admin/login" | jq -r .token)"
-[ -n "$token" ] && [ "$token" != null ] || { echo "could not sign in to $account" >&2; exit 1; }
+# and later to publish. python3 builds and reads the JSON (no jq needed).
+login="$(ADMIN_USER="$ADMIN_USER" ADMIN_PASSWORD="$ADMIN_PASSWORD" python3 -c 'import json, os; print(json.dumps({"username": os.environ["ADMIN_USER"], "password": os.environ["ADMIN_PASSWORD"]}))')"
+token="$(curl -fsS --retry 3 --max-time 60 -H 'Content-Type: application/json' --data "$login" \
+  "$account/api/v1/admin/login" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("token") or "")')"
+[ -n "$token" ] || { echo "could not sign in to the account service" >&2; exit 1; }
 (umask 077 && curl -fsS --retry 3 --max-time 60 -H "Authorization: Bearer $token" "$account/api/v1/admin/listkeys" > "$work/keys.json")
 
 # The candidates: whatever the collector abroad found, hot first.
@@ -90,7 +142,7 @@ for f in hot.txt fresh.txt; do
   curl -fsS --retry 3 --max-time 300 -o "$work/in/$f.sealed" "$account/list/servers/$f.sealed" || echo "no $f.sealed to test yet" >&2
 done
 SING_BOX="$PWD/cores/sing-box" XRAY="$PWD/cores/xray" ./collect -hot-from "$work/in/hot.txt.sealed,$work/in/fresh.txt.sealed" \
-  -keys "$work/keys.json" -real "${REAL:-1500}" -report "$work/iran.json" -tester iran -out "$work"
+  -keys "$work/keys.json" -real "${REAL:-600}" -report "$work/iran.json" -tester iran -out "$work"
 
 put() { # name file
   curl -fsS --retry 3 --max-time 300 -X PUT -H "Authorization: Bearer $token" -H 'Content-Type: application/octet-stream' \
@@ -99,7 +151,7 @@ put() { # name file
 put iran.json "$work/iran.json"
 # hot.txt from here only when this run confirmed enough servers; a thin run
 # leaves the collector's list in place.
-confirmed="$(jq '[.servers[] | select(.[0] == 2)] | length' "$work/iran.json")"
+confirmed="$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(sum(1 for v in (d.get("servers") or {}).values() if v and v[0] == 2))' "$work/iran.json")"
 if [ -s "$work/hot.txt.sealed" ] && [ "$confirmed" -ge 100 ]; then
   put hot.txt.sealed "$work/hot.txt.sealed"
 else
@@ -108,31 +160,57 @@ fi
 RUN
 chmod +x run.sh
 
-cat > /etc/systemd/system/albatross-tester.service <<UNIT
+# Runs every $EVERY, one at a time, keeping the last part of its log.
+cat > loop.sh <<LOOP
+#!/usr/bin/env bash
+cd $dir
+exec 9> $dir/loop.lock
+flock -n 9 || exit 0
+while true; do
+  { date -u '+%F %T UTC: run'; ./run.sh; } >> log.txt 2>&1 || true
+  tail -n 3000 log.txt > log.tmp && mv log.tmp log.txt
+  sleep $every
+done
+LOOP
+chmod +x loop.sh
+
+if grep -qi microsoft /proc/version 2>/dev/null; then
+  # Ubuntu in WSL on Windows: Windows starts it at sign-in, hidden, and the
+  # running loop keeps this Linux awake. No administrator rights needed.
+  win=/mnt/c/Windows/System32
+  distro="$(wslpath -w / 2>/dev/null | tr -d '\r' | sed -E 's#^\\\\wsl(\.localhost|\$)\\([^\\]+).*#\2#')"
+  [ -n "$distro" ] || fail "could not tell which WSL distribution this is."
+  appdata="$(cd /mnt/c && "$win/cmd.exe" /c 'echo %APPDATA%' 2>/dev/null | tr -d '\r')"
+  [ -n "$appdata" ] || fail "could not reach Windows from this Linux (WSL interop is off)."
+  startup="$(wslpath -u "$appdata")/Microsoft/Windows/Start Menu/Programs/Startup"
+  mkdir -p "$startup"
+  printf 'CreateObject("WScript.Shell").Run "wsl.exe -d %s -u root -- %s/loop.sh", 0, False\r\n' "$distro" "$dir" > "$startup/Albatross tester.vbs"
+  (cd /mnt/c && "$win/wscript.exe" "$(wslpath -w "$startup/Albatross tester.vbs")") || fail "could not start the tester in the background."
+  say "Installed. It runs now and every $EVERY, and starts again whenever you sign in to Windows."
+  say "Keep the computer on and awake (Windows: Settings > System > Power > Sleep: Never)."
+elif [ "$(ps -p 1 -o comm= 2>/dev/null)" = systemd ]; then
+  cat > /etc/systemd/system/albatross-tester.service <<UNIT
 [Unit]
 Description=Albatross tester inside the country
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
-WorkingDirectory=$dir
-ExecStart=$dir/run.sh
+Type=simple
+ExecStart=$dir/loop.sh
+Restart=always
+RestartSec=60
 Nice=10
-UNIT
-cat > /etc/systemd/system/albatross-tester.timer <<UNIT
-[Unit]
-Description=Run the Albatross tester every $EVERY
-
-[Timer]
-OnBootSec=3min
-OnUnitActiveSec=$EVERY
-RandomizedDelaySec=10min
 
 [Install]
-WantedBy=timers.target
+WantedBy=multi-user.target
 UNIT
-systemctl daemon-reload
-systemctl enable --now albatross-tester.timer
-systemctl start --no-block albatross-tester.service
-echo "Installed. First run started; follow it with: journalctl -fu albatross-tester"
+  systemctl daemon-reload
+  systemctl enable --now albatross-tester.service
+  say "Installed. It runs now and every $EVERY, also after a restart."
+else
+  (crontab -l 2>/dev/null | grep -v albatross-tester; echo "@reboot $dir/loop.sh") | crontab - 2>/dev/null || true
+  setsid nohup "$dir/loop.sh" > /dev/null 2>&1 < /dev/null &
+  say "Installed. It runs now and every $EVERY."
+fi
+say "Its log: sudo tail -f $dir/log.txt"

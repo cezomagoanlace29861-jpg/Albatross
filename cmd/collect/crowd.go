@@ -26,6 +26,17 @@ type crowdStats struct {
 	// server (the service's sum of the apps' reports): the hot list keeps
 	// more of what people ask for.
 	demand map[string]float64
+	// tester is the freshest tester report, the evidence from inside the
+	// country the proven list honours (proven.go).
+	tester testerReport
+}
+
+// testerReport is what a tester inside the country last reported: when,
+// and the servers it confirmed (it connected through each twice, with a
+// download each time, and both passed).
+type testerReport struct {
+	at        time.Time
+	confirmed map[uint64]bool
 }
 
 // crowdFile is the file form: servers maps a server key (hex) to [passed,
@@ -69,7 +80,7 @@ func loadCrowd(paths string) crowdStats {
 		for proto, n := range f.Demand {
 			out.demand[proto] += n
 		}
-		confirmed := 0
+		confirmed := map[uint64]bool{}
 		for k, v := range f.Servers {
 			key, err := strconv.ParseUint(k, 16, 64)
 			if err != nil || v[1] <= 0 {
@@ -80,14 +91,17 @@ func loadCrowd(paths string) crowdStats {
 			r[1] += v[1]
 			out.rates[key] = r
 			if v[1] >= 2 && v[0] == v[1] {
-				confirmed++
+				confirmed[key] = true
 			}
 		}
+		if f.Tester != "" && f.Updated.After(out.tester.at) {
+			out.tester = testerReport{at: f.Updated, confirmed: confirmed}
+		}
 		fresh := time.Since(f.Updated) < testerFresh
-		if f.Tester != "" && fresh && confirmed >= strictMin {
+		if f.Tester != "" && fresh && len(confirmed) >= strictMin {
 			out.strict = true
 		}
-		log.Printf("crowd: %s: %d servers (tester %q, %d confirmed, fresh %v)", path, len(f.Servers), f.Tester, confirmed, fresh)
+		log.Printf("crowd: %s: %d servers (tester %q, %d confirmed, fresh %v)", path, len(f.Servers), f.Tester, len(confirmed), fresh)
 	}
 	return out
 }

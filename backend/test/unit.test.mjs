@@ -151,7 +151,7 @@ test("release files: names, sources and ranges", async () => {
 
 test("the app's own files: names and types", async () => {
   const { LIST_PATH, listType } = await import("../src/files.js");
-  for (const p of ["servers/hot.txt", "servers/all-8.txt", "servers/tor.json", "servers/crowd.json", "servers/iran.json", "servers/own-0.bin", "servers/own-4.bin", "servers/hot.txt.sealed", "servers/own-2.bin.sealed", "servers/reach.json", "main/update.json", "rules/ads.srs", "rules/ads.json", "rules/LICENSE-GPL-3.0.txt", "tools/collect-linux-amd64"]) assert.ok(LIST_PATH.test(p), p);
+  for (const p of ["servers/hot.txt", "servers/all-8.txt", "servers/tor.json", "servers/crowd.json", "servers/iran.json", "servers/own-0.bin", "servers/own-4.bin", "servers/hot.txt.sealed", "servers/own-2.bin.sealed", "servers/reach.json", "servers/proven.txt", "servers/proven.txt.sealed", "main/update.json", "rules/ads.srs", "rules/ads.json", "rules/LICENSE-GPL-3.0.txt", "tools/collect-linux-amd64", "tools/tester-install.sh"]) assert.ok(LIST_PATH.test(p), p);
   assert.equal(listType("tools/collect-linux-amd64"), "application/octet-stream");
   for (const p of ["servers/all-9.txt", "servers/own-5.bin", "main/README.md", "../x", "servers/hot.txt/..", "rules/other.json", "servers/iran-tcp.json", "servers/tor.json.sealed"]) assert.ok(!LIST_PATH.test(p), p);
   assert.equal(listType("main/update.json"), "application/json; charset=utf-8");
@@ -476,7 +476,7 @@ test("each account also gets its own share of the servers reached through the CD
   const lines = [];
   for (let i = 0; i < 300; i++) lines.push(`vless://u@cdn${i}.example.com:443?security=tls&type=ws&host=cdn${i}.example.com#DE-${i}`);
   for (let i = 0; i < 100; i++) lines.push(`vless://u@1.2.3.${i % 250}:443?security=reality&sni=a.com#NL-${i}`);
-  const files = { "list/servers/hot.txt": lines.join("\n") };
+  const files = { "list/servers/proven.txt": lines.join("\n") };
   const env = { TOKEN_SECRET: "s".repeat(40), FILES: { get: async (k) => (k in files ? { text: async () => files[k], arrayBuffer: async () => new ArrayBuffer(0) } : null) } };
   const t = Date.UTC(2026, 9, 31, 12);
   const have = [{ link: lines[0], country: "DE" }];
@@ -486,6 +486,44 @@ test("each account also gets its own share of the servers reached through the CD
   assert.ok(!a.some((e) => e.link === lines[0]), "none the account already has");
   assert.deepEqual((await resistantFor(env, 7, t, have)).map((e) => e.link), a.map((e) => e.link), "the same all day");
   assert.notDeepEqual((await resistantFor(env, 8, t, have)).map((e) => e.link), a.map((e) => e.link), "another for another account");
+});
+
+// Storage holding the given files (key: their name under list/servers/).
+const filesEnv = (files) => ({
+  TOKEN_SECRET: "s".repeat(40),
+  FILES: { get: async (k) => (k.startsWith("list/servers/") && k.slice(13) in files ? { text: async () => files[k.slice(13)], arrayBuffer: async () => new ArrayBuffer(0) } : null) },
+});
+
+test("accounts get only the proven servers: never the hot list or anything untested", async () => {
+  const { appPool, subPool, resistantFor } = await import("../src/sub.js");
+  const tested = [
+    "vless://11111111-2222-4333-8444-555555555555@a.example.com:443?security=tls&type=ws&host=a.example.com&path=%2F#Germany-1",
+    "trojan://p@b.example.com:443#Netherlands-1",
+  ].join("\n");
+  const untested = ["vless://11111111-2222-4333-8444-555555555555@c.example.com:443?security=tls&type=ws&host=c.example.com&path=%2F#Finland-1"].join("\n");
+  const t = Date.UTC(2026, 9, 31, 12);
+  // Only the collector's other lists: nothing at all.
+  const without = filesEnv({ "hot.txt": untested, "fresh.txt": untested, "all-1.txt": untested });
+  assert.deepEqual(await appPool(without, dayPick(t)), []);
+  assert.deepEqual(await subPool(without, dayPick(t)), []);
+  assert.deepEqual(await resistantFor(without, 7, t, []), []);
+  // An empty proven list is no list either.
+  const empty = filesEnv({ "proven.txt": "\n", "hot.txt": untested });
+  assert.deepEqual(await appPool(empty, dayPick(t)), []);
+  // The proven list, and nothing from the others beside it.
+  const env = filesEnv({ "proven.txt": tested, "hot.txt": untested, "fresh.txt": untested });
+  assert.deepEqual((await appPool(env, dayPick(t))).map((e) => e.country).sort(), ["DE", "NL"]);
+  assert.deepEqual((await subPool(env, dayPick(t))).map((e) => e.country).sort(), ["DE", "NL"]);
+  assert.deepEqual((await resistantFor(env, 7, t, [])).map((e) => e.country), ["DE"]);
+});
+
+test("the administrator sees how many servers accounts are given and what proved them", async () => {
+  const { provenStatus } = await import("../src/sub.js");
+  const meta = JSON.stringify({ updated: "2026-10-31T12:00:00Z", proven: 2, proven_by: "tester+globalping", proven_from: { tester: 1, globalping: 1, "<b>": 3, cdn: "x" } });
+  assert.deepEqual(await provenStatus(filesEnv({ "proven.txt": "vless://a@b:443#DE\ntrojan://p@c:443#NL\n", "meta.json": meta })), {
+    proven: 2, by: "tester+globalping", from: { tester: 1, globalping: 1 }, updated: "2026-10-31T12:00:00Z",
+  });
+  assert.deepEqual(await provenStatus(filesEnv({ "meta.json": "not json" })), { proven: 0, by: "", from: {}, updated: "" });
 });
 
 test("a higher plan gets more servers, and no plan the pool whole", async () => {
