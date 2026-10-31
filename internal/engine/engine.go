@@ -399,15 +399,44 @@ func (e *Engine) SetLocalDNS(addr string) {
 		e.triggerRefill()
 	}
 	if moved && c != nil {
-		// The cores carry the old network's resolver in their configs: on
-		// a phone that moved from Wi-Fi to mobile data it is unreachable,
-		// and every server named by a host would fail to resolve. The
-		// connection is rebuilt with the new one; connections made over the
-		// old network are gone anyway.
-		e.logf("info", "The network changed; reconnecting with its resolver.")
-		go e.rebuild(c, nil)
+		go e.resolverMoved(c)
 	}
 }
+
+// resolverMoved rebuilds the connection with the network's new resolver,
+// unless the connection still carries traffic. The cores carry the old
+// resolver in their configs: on a phone that moved from Wi-Fi to mobile
+// data it is unreachable and every server named by a host fails to
+// resolve, so the connection is rebuilt. But the resolver also changes
+// while the network stays (a phone with two SIMs reorders its list, or the
+// network is read again as the VPN comes up), and rebuilding then only
+// dropped a working connection, often a second after it was made. A
+// connection that still works stays; the next one uses the new resolver.
+func (e *Engine) resolverMoved(c *connection) {
+	parent := e.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, resolverCheck)
+	r := tester.Probe(ctx, c.proxyURL(), resolverCheck)
+	cancel()
+	e.mu.Lock()
+	current := e.conn == c
+	e.mu.Unlock()
+	if !current || parent.Err() != nil {
+		return
+	}
+	if r.OK {
+		e.logf("info", "The network's resolver changed; the connection still works, so it stays.")
+		return
+	}
+	e.logf("info", "The network changed; reconnecting with its resolver.")
+	e.rebuild(c, nil)
+}
+
+// resolverCheck is how long a connection has to show it still works after
+// the network's resolver changed.
+var resolverCheck = 8 * time.Second
 
 func (e *Engine) dns() string {
 	e.mu.Lock()
