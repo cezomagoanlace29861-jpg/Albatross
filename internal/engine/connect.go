@@ -418,7 +418,7 @@ func (e *Engine) pickGroup(country, home string, exclude map[string]bool, size i
 	}
 	group := e.bestServers(home, size, exclude)
 	if len(group) >= minReady {
-		return group
+		return e.withEdge(group, exclude, size)
 	}
 	skip := map[string]bool{}
 	for k := range exclude {
@@ -427,7 +427,52 @@ func (e *Engine) pickGroup(country, home string, exclude map[string]bool, size i
 	for _, s := range group {
 		skip[s.Key] = true
 	}
-	return append(group, e.bestServers("", size-len(group), skip)...)
+	return e.withEdge(append(group, e.bestServers("", size-len(group), skip)...), exclude, size)
+}
+
+// withEdge keeps the service's own edge in an automatic group, when the
+// plan has it and it works: a group holds one country's servers, and the
+// edge, whose country is another, was left out even while that country's
+// servers carried a few KB/s and the edge answered in a quarter second.
+// With it in the group, the race and the speed rounds can move to it.
+// It takes the place of the group's last member when the group is full.
+func (e *Engine) withEdge(group []*Server, exclude map[string]bool, size int) []*Server {
+	for _, s := range group {
+		if s.Source == "edge" {
+			return group
+		}
+	}
+	edge := e.bestEdge(exclude)
+	if edge == nil {
+		return group
+	}
+	if len(group) >= size && len(group) > 0 {
+		group = group[:len(group)-1]
+	}
+	return append(group, edge)
+}
+
+// bestEdge is the best working server of the edge, or nil: none works, the
+// plan lacks it (its servers are not used then), or a protocol is chosen.
+func (e *Engine) bestEdge(exclude map[string]bool) *Server {
+	now := time.Now()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.settings.Protocol != "" {
+		return nil
+	}
+	reg, p := e.reg.Regime, e.reg.Probe
+	var best *Server
+	var bestRank float64
+	for _, s := range e.good {
+		if s.Source != "edge" || exclude[s.Key] || !s.usable(now) || s.Node() == nil {
+			continue
+		}
+		if r := s.rankIn(now, reg, p); best == nil || r < bestRank {
+			best, bestRank = s, r
+		}
+	}
+	return best
 }
 
 // maxHandshake is the slowest TCP handshake a server may take to be picked
