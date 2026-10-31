@@ -2,26 +2,26 @@
   "download_url": "https://albatrossvpn.online/#download",
   "files": {
     "android-arm64-v8a": {
-      "sha256": "d85ed5334e4d42a3062d6a5ffd3e1cf3e0bc3523abd8c6f0ac96fed478ea3b03",
+      "sha256": "7942dfe4f123abd3d4f1c1ad9990a9f1d12e12d26ce4280d90bdb6b36731dc12",
       "urls": [
-        "https://albatrossvpn.online/download/Albatross-1.2.2-android.apk",
-        "https://accounts.albatrossvpn.online/dl/v1.2.2/Albatross-1.2.2-android.apk",
-        "https://github.com/Albatrossvpn/alba-data/releases/download/v1.2.2/Albatross-1.2.2-android.apk"
+        "https://albatrossvpn.online/download/Albatross-1.3.1-android.apk",
+        "https://accounts.albatrossvpn.online/dl/v1.3.1/Albatross-1.3.1-android.apk",
+        "https://github.com/Albatrossvpn/alba-data/releases/download/v1.3.1/Albatross-1.3.1-android.apk"
       ]
     },
     "windows": {
-      "sha256": "e4b06813837e5b8d46a852751e32ad17ebf74b66dd01fc193128f8bff0f5ff4e",
+      "sha256": "e0613f7fa3c32df85453c978006bb6b55c5a0ed3e79b22358d692aeec241558b",
       "urls": [
-        "https://albatrossvpn.online/download/Albatross-Setup-1.2.2.exe",
-        "https://accounts.albatrossvpn.online/dl/v1.2.2/Albatross-Setup-1.2.2.exe",
-        "https://github.com/Albatrossvpn/alba-data/releases/download/v1.2.2/Albatross-Setup-1.2.2.exe"
+        "https://albatrossvpn.online/download/Albatross-Setup-1.3.1.exe",
+        "https://accounts.albatrossvpn.online/dl/v1.3.1/Albatross-Setup-1.3.1.exe",
+        "https://github.com/Albatrossvpn/alba-data/releases/download/v1.3.1/Albatross-Setup-1.3.1.exe"
       ]
     }
   },
-  "latest_version": "1.2.2",
-  "message": "Albatross 1.2.2: a tidier Settings screen, a clearer speed test, buying an account from the sign-in screen, and a stricter speed bar, so slow servers are left out sooner.",
-  "min_version": "1.2.1",
-  "require": "1.2.1",
-  "sig": "l9Z3KLWyuIeA3ShupcXbigcnxAG96ebepudDEfcP8Xc/mZzP6wy7H3x4ozovbLc/1XzFW2dONsDeUE6i9RpVAA==",
-  "signed": "eyJkb3dubG9hZF91cmwiOiJodHRwczovL2FsYmF0cm9zc3Zwbi5vbmxpbmUvI2Rvd25sb2FkIiwiZmlsZXMiOnsiYW5kcm9pZC1hcm02NC12OGEiOnsic2hhMjU2IjoiZDg1ZWQ1MzM0ZTRkNDJhMzA2MmQ2YTVmZmQzZTFjZjNlMGJjMzUyM2FiZDhjNmYwYWM5NmZlZDQ3OGVhM2IwMyIsInVybHMiOlsiaHR0cHM6Ly9hbGJhdHJvc3N2cG4ub25saW5lL2Rvd25sb2FkL0FsYmF0cm9zcy0xLjIuMi1hbmRyb2lkLmFwayIsImh0dHBzOi8vYWNjb3VudHMuYWxiYXRyb3NzdnBuLm9ubGluZS9kbC92MS4yLjIvQWxiYXRyb3NzLTEuMi4yLWFuZHJvaWQuYXBrIiwiaHR0cHM6Ly9naXRodWIuY29tL0FsYmF0cm9zc3Zwbi9hbGJhLWRhdGEvcmVsZWFzZXMvZG93bmxvYWQvdjEuMi4yL0FsYmF0cm9zcy0xLjIuMi1hbmRyb2lkLmFwayJdfSwid2luZG93cyI6eyJzaGEyNTYiOiJlNGIwNjgxMzgzN2U1YjhkNDZhODUyNzUxZTMyYWQxN2ViZjc0YjY2ZGQwMWZjMTkzMTI4ZjhiZmYwZjVmZjRlIiwidXJscyI6WyJodHRwczovL2FsYmF0cm9zc3Zwbi5vbmxpbmUvZG93bmxvYWQvQWxiYXRyb3NzLVNldHVwLTEuMi4yLmV4ZSIsImh0dHBzOi8vYWNjb3VudHMuYWxiYXRyb3NzdnBuLm9ubGluZS9kbC92MS4yLjIvQWxiYXRyb3NzLVNldHVwLTEuMi4yLmV4ZSIsImh0dHBzOi8vZ2l0aHViLmNvbS9BbGJhdHJvc3N2cG4vYWxiYS1kYXRhL3JlbGVhc2VzL2Rvd25sb2FkL3YxLjIuMi9BbGJhdHJvc3MtU2V0dXAtMS4yLjIuZXhlIl19fSwibGF0ZXN0X3ZlcnNpb24iOiIxLjIuMiIsIm1lc3NhZ2UiOiJBbGJhdHJvc3MgMS4yLjI6IGEgdGlkaWVyIFNldHRpbmdzIHNjcmVlbiwgYSBjbGVhcmVyIHNwZWVkIHRlc3QsIGJ1eWluZyBhbiBhY2NvdW50IGZyb20gdGhlIHNpZ24taW4gc2NyZWVuLCBhbmQgYSBzdHJpY3RlciBzcGVlZCBiYXIsIHNvIHNsb3cgc2VydmVycyBhcmUgbGVmdCBvdXQgc29vbmVyLiIsIm1pbl92ZXJzaW9uIjoiMS4yLjEiLCJyZXF1aXJlIjoiMS4yLjEifQ=="
+  "latest_version": "1.3.1",
+  "message": "Albatross 1.3.1: connects on networks that let only approved sites through, keeps a working connection instead of reconnecting when the network is read again, more servers on higher plans, and updates that keep downloading when the connection changes.",
+  "min_version": "1.3.1",
+  "require": "1.3.1",
+  "sig": "DkD74mSAbjLlSQSbn3cDSSVFnsSKmLm0NMgLJTRh4rmwHQcjvJYT8p2hAu4j39UL/NIWkF16We/R/ut0kS7wDw==",
+  "signed": "eyJkb3dubG9hZF91cmwiOiJodHRwczovL2FsYmF0cm9zc3Zwbi5vbmxpbmUvI2Rvd25sb2FkIiwiZmlsZXMiOnsiYW5kcm9pZC1hcm02NC12OGEiOnsic2hhMjU2IjoiNzk0MmRmZTRmMTIzYWJkM2Q0ZjFjMWFkOTk5MGE5ZjFkMTJlMTJkMjZjZTQyODBkOTBiZGI2YjM2NzMxZGMxMiIsInVybHMiOlsiaHR0cHM6Ly9hbGJhdHJvc3N2cG4ub25saW5lL2Rvd25sb2FkL0FsYmF0cm9zcy0xLjMuMS1hbmRyb2lkLmFwayIsImh0dHBzOi8vYWNjb3VudHMuYWxiYXRyb3NzdnBuLm9ubGluZS9kbC92MS4zLjEvQWxiYXRyb3NzLTEuMy4xLWFuZHJvaWQuYXBrIiwiaHR0cHM6Ly9naXRodWIuY29tL0FsYmF0cm9zc3Zwbi9hbGJhLWRhdGEvcmVsZWFzZXMvZG93bmxvYWQvdjEuMy4xL0FsYmF0cm9zcy0xLjMuMS1hbmRyb2lkLmFwayJdfSwid2luZG93cyI6eyJzaGEyNTYiOiJlMDYxM2Y3ZmEzYzMyZGY4NTQ1M2M5NzgwMDZiYjZiNTVjNWEwZWQzZTc5YjIyMzU4ZDY5MmFlZWMyNDE1NThiIiwidXJscyI6WyJodHRwczovL2FsYmF0cm9zc3Zwbi5vbmxpbmUvZG93bmxvYWQvQWxiYXRyb3NzLVNldHVwLTEuMy4xLmV4ZSIsImh0dHBzOi8vYWNjb3VudHMuYWxiYXRyb3NzdnBuLm9ubGluZS9kbC92MS4zLjEvQWxiYXRyb3NzLVNldHVwLTEuMy4xLmV4ZSIsImh0dHBzOi8vZ2l0aHViLmNvbS9BbGJhdHJvc3N2cG4vYWxiYS1kYXRhL3JlbGVhc2VzL2Rvd25sb2FkL3YxLjMuMS9BbGJhdHJvc3MtU2V0dXAtMS4zLjEuZXhlIl19fSwibGF0ZXN0X3ZlcnNpb24iOiIxLjMuMSIsIm1lc3NhZ2UiOiJBbGJhdHJvc3MgMS4zLjE6IGNvbm5lY3RzIG9uIG5ldHdvcmtzIHRoYXQgbGV0IG9ubHkgYXBwcm92ZWQgc2l0ZXMgdGhyb3VnaCwga2VlcHMgYSB3b3JraW5nIGNvbm5lY3Rpb24gaW5zdGVhZCBvZiByZWNvbm5lY3Rpbmcgd2hlbiB0aGUgbmV0d29yayBpcyByZWFkIGFnYWluLCBtb3JlIHNlcnZlcnMgb24gaGlnaGVyIHBsYW5zLCBhbmQgdXBkYXRlcyB0aGF0IGtlZXAgZG93bmxvYWRpbmcgd2hlbiB0aGUgY29ubmVjdGlvbiBjaGFuZ2VzLiIsIm1pbl92ZXJzaW9uIjoiMS4zLjEiLCJyZXF1aXJlIjoiMS4zLjEifQ=="
 }
