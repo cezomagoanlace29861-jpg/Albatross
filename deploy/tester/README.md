@@ -30,9 +30,12 @@ the project's own storage: the collector built by CI and the cores
 (sing-box, Xray); GitHub, or `CORES_URL`, only if those fail. It needs
 nothing from apt on a base Ubuntu (curl, python3, tar, flock).
 
-It runs at once and then every two hours (`EVERY=3h` changes that), and
-connects through up to 600 servers a run (`REAL`). Each server that works
-carries two small downloads, so a run can use several hundred MB.
+Its first run tests every server the collector found (a one-off of a few
+GB); after that it runs every six hours (`EVERY=3h` changes that), and
+connects through the servers of hot.txt, up to 450 a run (`REAL`). Each
+server that works carries two downloads of 1 MiB (`SPEED_BYTES`), so on a
+metered line it uses roughly 15 to 35 GB a month; while its report is older
+than three hours, Globalping's probes prove the servers instead.
 
 - **WSL on Windows:** Windows starts it, hidden, whenever you sign in (a
   launcher in your Startup folder, no administrator rights needed), and the

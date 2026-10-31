@@ -11,6 +11,9 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 # The settings install.sh wrote, shell-quoted so any password works.
 if [ -f ./env ]; then . ./env; fi
 : "${ACCOUNT_URL:?}" "${ADMIN_USER:?}" "${ADMIN_PASSWORD:?}"
+# FULL=1 (the first run after installing): every server the collector
+# found, not only hot.txt.
+[ "${FULL:-0}" = 1 ] && REAL=100000
 account="${ACCOUNT_URL%/}"
 work=work
 rm -rf "$work" && mkdir -p "$work/in"
@@ -23,12 +26,18 @@ token="$(curl -fsS --retry 3 --max-time 60 -H 'Content-Type: application/json' -
 [ -n "$token" ] || { echo "could not sign in to the account service" >&2; exit 1; }
 (umask 077 && curl -fsS --retry 3 --max-time 60 -H "Authorization: Bearer $token" "$account/api/v1/admin/listkeys" > "$work/keys.json")
 
-# The candidates: whatever the collector abroad found, hot first.
-for f in hot.txt fresh.txt; do
+# The candidates: whatever the collector abroad found, hot first; the top
+# of fresh.txt only when a run tests more than hot.txt holds (450), which
+# saves a metered line the download.
+lists="hot.txt"
+[ "${REAL:-450}" -gt 450 ] && lists="hot.txt fresh.txt"
+for f in $lists; do
   curl -fsS --retry 3 --max-time 300 -o "$work/in/$f.sealed" "$account/list/servers/$f.sealed" || echo "no $f.sealed to test yet" >&2
 done
-SING_BOX="$PWD/cores/sing-box" XRAY="$PWD/cores/xray" ./collect -hot-from "$work/in/hot.txt.sealed,$work/in/fresh.txt.sealed" \
-  -keys "$work/keys.json" -real "${REAL:-600}" -report "$work/iran.json" -tester iran -out "$work"
+from="$work/in/hot.txt.sealed"
+[ -s "$work/in/fresh.txt.sealed" ] && from="$from,$work/in/fresh.txt.sealed"
+SING_BOX="$PWD/cores/sing-box" XRAY="$PWD/cores/xray" ./collect -hot-from "$from" \
+  -keys "$work/keys.json" -real "${REAL:-450}" -speed-bytes "${SPEED_BYTES:-1048576}" -report "$work/iran.json" -tester iran -out "$work"
 
 put() { # name file
   curl -fsS --retry 3 --max-time 300 -X PUT -H "Authorization: Bearer $token" -H 'Content-Type: application/octet-stream' \
