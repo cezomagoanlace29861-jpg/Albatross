@@ -168,7 +168,7 @@ jobs:
             bash ../deploy/files/publish-lists.sh "$account" "$branch" "${files[@]}" || echo "::warning::the $branch files could not all be stored"
           }
           lists=()
-          for f in hot.txt new.txt fresh.txt all-1.txt all-2.txt all-3.txt all-4.txt all-5.txt all-6.txt all-7.txt all-8.txt own-0.bin own-1.bin own-2.bin own-3.bin own-4.bin; do
+          for f in hot.txt proven.txt new.txt fresh.txt all-1.txt all-2.txt all-3.txt all-4.txt all-5.txt all-6.txt all-7.txt all-8.txt own-0.bin own-1.bin own-2.bin own-3.bin own-4.bin; do
             lists+=("$f.sealed")
             # The plain copies, only while LISTS_PLAIN is 1 (collect.yml).
             [ "${LISTS_PLAIN:-0}" = 1 ] && lists+=("$f")

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -368,48 +369,105 @@ func confirm(passed map[*entry]time.Duration) map[*entry]time.Duration {
 	return out
 }
 
+// iranCheck is what checkIran learned.
+type iranCheck struct {
+	// hot is the hot list with what does not answer from inside left out,
+	// those that do first.
+	hot []*entry
+	// answers is every address's record as iran-tcp.json keeps it, this
+	// run's answers in.
+	answers map[string]iranSeen
+	// cdn marks the hot servers reached through Cloudflare (cdnFronted):
+	// their own address is not asked about.
+	cdn map[*entry]bool
+	// checkable counts the hot servers whose address can be asked about
+	// (TCP, not reached through Cloudflare); fresh how many of them have
+	// an answer from inside younger than iranFresh, open how many of those
+	// answered; asked the addresses asked about this run.
+	checkable, fresh, open, asked int
+}
+
 // checkIran asks probes inside the country which hot addresses answer
 // there, keeping the answers in iran-tcp.json (read from prevDir, written
 // to outDir) so a run spends its quota on addresses not checked lately.
 // It returns the hot list with what does not answer from inside left out,
-// those that do first, and how many addresses had an answer and answered.
-func checkIran(hot []*entry, prevDir, outDir string) ([]*entry, int, int) {
+// those that do first.
+//
+// The quota is not enough to ask about every address every run, so an
+// answer is kept iranFresh and asked for again once it is iranRecheck old,
+// before it runs out. What is asked goes in order: the fixed Cloudflare
+// edge addresses (reach.json stands on them, and they are few), then the
+// hot addresses in hot order, then edge addresses sampled at random. When
+// the budget (iranChecks) or the hourly quota ends a run's asking, it is
+// the end of the hot list that waits, never the top.
+func checkIran(hot []*entry, prevDir, outDir string) iranCheck {
 	cache := loadIranCache(prevDir)
 	now := time.Now()
+	r := iranCheck{cdn: cdnFronted(hot)}
+	due := func(ep string) bool {
+		c, ok := cache[ep]
+		return !ok || now.Sub(time.Unix(c.At, 0)) >= iranRecheck
+	}
 	var eps []string
-	for _, e := range hot {
-		if e.endpoint == "" {
-			continue
+	queued := map[string]bool{}
+	add := func(ep string) bool {
+		if queued[ep] || !due(ep) {
+			return false
 		}
-		if c, ok := cache[e.endpoint]; ok && now.Sub(time.Unix(c.At, 0)) < iranFresh {
-			continue
-		}
-		if len(eps) < iranChecks() {
-			eps = append(eps, e.endpoint)
-		}
+		queued[ep] = true
+		eps = append(eps, ep)
+		return true
 	}
-	// Cloudflare edge addresses too: the apps reach the account service
-	// through whichever of them the network lets through (reach.json).
+	// Cloudflare edge addresses too: the apps reach the account service and
+	// the servers behind Cloudflare through whichever of them the network
+	// lets through (reach.json).
+	var fixed, sampled []string
 	if edgeChecks > 0 {
-		eps = append(eps, edgeCandidates(cache, now)...)
+		fixed, sampled = edgeCandidates()
 	}
+	edges := 0
+	for _, ep := range fixed {
+		if edges < edgeChecks && add(ep) {
+			edges++
+		}
+	}
+	budget, hotAsked := iranChecks(), 0
+	for _, e := range hot {
+		if e.endpoint == "" || r.cdn[e] {
+			continue
+		}
+		if hotAsked < budget && add(e.endpoint) {
+			hotAsked++
+		}
+	}
+	for _, ep := range sampled {
+		if edges < edgeChecks && add(ep) {
+			edges++
+		}
+	}
+	r.asked = len(eps)
 	if len(eps) > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 		defer cancel()
-		for ep, open := range iranReach(ctx, eps, gpProbes()) {
-			cache[ep] = iranSeen{Open: open, At: now.Unix()}
+		got := iranReach(ctx, eps)
+		for ep, a := range got {
+			cache[ep] = cache[ep].next(a, now)
 		}
+		log.Printf("globalping: %d of %d addresses asked had an answer", len(got), len(eps))
 	}
 	saveIranCache(outDir, cache, now)
 	writeReach(outDir, cache, now)
 	seen := map[string]bool{}
-	checked, open := 0, 0
 	for _, e := range hot {
-		if c, ok := cache[e.endpoint]; ok && e.endpoint != "" && now.Sub(time.Unix(c.At, 0)) < iranFresh {
+		if e.endpoint == "" || r.cdn[e] {
+			continue
+		}
+		r.checkable++
+		if c, ok := cache[e.endpoint]; ok && now.Sub(time.Unix(c.At, 0)) < iranFresh {
 			seen[e.endpoint] = c.Open
-			checked++
+			r.fresh++
 			if c.Open {
-				open++
+				r.open++
 			}
 		}
 	}
@@ -419,20 +477,59 @@ func checkIran(hot []*entry, prevDir, outDir string) ([]*entry, int, int) {
 			kept = append(kept, e)
 		}
 	}
-	iranFirst(kept, seen)
-	log.Printf("globalping: %d of %d hot addresses answer from Iran (%d asked this run); %d left out", open, checked, len(eps), len(hot)-len(kept))
-	return kept, checked, open
+	r.hot = iranFirst(kept, seen)
+	r.answers = cache
+	log.Printf("globalping: %d of %d hot addresses that can be asked about have a fresh answer from Iran, %d of them open; %d hot addresses asked this run (at most %d), %d edge addresses; %d hot servers left out",
+		r.fresh, r.checkable, r.open, hotAsked, budget, edges, len(hot)-len(kept))
+	return r
 }
 
-// iranSeen is one address's last answer from inside the country.
+// iranSeen is one address's last answer from inside the country, with
+// the ones before it. The fields after At came with the proven list
+// (proven.go); records written before them have none and prove nothing.
 type iranSeen struct {
+	Open bool  `json:"open"`
+	At   int64 `json:"at"`
+	// Probes completed handshakes; RTT is their mean time and Jitter the
+	// mean difference between consecutive ones (-1: not measured), ms;
+	// Loss is the handshakes without an answer, percent.
+	Probes int     `json:"probes,omitempty"`
+	RTT    float64 `json:"rtt,omitempty"`
+	Jitter float64 `json:"jitter,omitempty"`
+	Loss   float64 `json:"loss,omitempty"`
+	// Hist is the answers before this one, newest first, at most
+	// iranHistory of them.
+	Hist []iranPast `json:"hist,omitempty"`
+}
+
+// iranPast is an earlier answer: whether the address was open, and when.
+type iranPast struct {
 	Open bool  `json:"open"`
 	At   int64 `json:"at"`
 }
 
+// next is the record after a new answer: the answer, with the one before
+// it at the head of the history.
+func (s iranSeen) next(a gpAnswer, now time.Time) iranSeen {
+	out := iranSeen{Open: a.open, At: now.Unix(), Probes: a.probes, RTT: tenth(a.rtt), Jitter: tenth(a.jitter), Loss: tenth(a.loss)}
+	if s.At > 0 {
+		out.Hist = append([]iranPast{{Open: s.Open, At: s.At}}, s.Hist...)
+		out.Hist = out.Hist[:min(len(out.Hist), iranHistory)]
+	}
+	return out
+}
+
+// tenth rounds to a tenth, which is all the precision the file needs.
+func tenth(v float64) float64 { return math.Round(v*10) / 10 }
+
 // iranFresh is how long an answer from inside counts; iranKeep how long
-// it is kept in the file at all.
-const iranFresh, iranKeep = 3 * time.Hour, 24 * time.Hour
+// it is kept in the file at all; iranRecheck how old it may get before
+// the address is asked about again, early enough that the next answer
+// comes before this one runs out (runs come about every twenty minutes).
+const iranFresh, iranKeep, iranRecheck = 3 * time.Hour, 24 * time.Hour, 150 * time.Minute
+
+// iranHistory is how many earlier answers an address's record keeps.
+const iranHistory = 4
 
 const iranCacheName = "iran-tcp.json"
 
@@ -453,9 +550,19 @@ func saveIranCache(dir string, cache map[string]iranSeen, now time.Time) {
 	if dir == "" {
 		return
 	}
+	old := func(at int64) bool { return now.Sub(time.Unix(at, 0)) > iranKeep }
 	for ep, c := range cache {
-		if now.Sub(time.Unix(c.At, 0)) > iranKeep {
+		if old(c.At) {
 			delete(cache, ep)
+			continue
+		}
+		n := 0
+		for n < len(c.Hist) && !old(c.Hist[n].At) {
+			n++
+		}
+		if n < len(c.Hist) {
+			c.Hist = c.Hist[:n]
+			cache[ep] = c
 		}
 	}
 	b, err := json.Marshal(cache)
@@ -464,18 +571,18 @@ func saveIranCache(dir string, cache map[string]iranSeen, now time.Time) {
 	}
 }
 
-// iranChecks bounds the addresses checked from Iran per run, within the
-// hourly quota (two probes each): the anonymous one, or the larger one a
-// GLOBALPING_TOKEN gives.
+// iranChecks bounds the hot addresses asked about from Iran per run: as
+// many as the hourly quota allows at gpMinProbes tests each (Globalping
+// gives 250 tests an hour without an account, 500 with GLOBALPING_TOKEN;
+// the credits an own probe earns, 150 tests a day, come on top). Runs come
+// about every twenty minutes, so in a busy hour the quota runs out before
+// the bound: the asking stops there, and the next run goes on where the
+// order (checkIran) left off.
 func iranChecks() int {
-	if os.Getenv("GLOBALPING_TAGS") != "" {
-		// Own probes: one test per address, paid for by the credits they earn.
-		return 300
-	}
 	if os.Getenv("GLOBALPING_TOKEN") != "" {
-		return 500
+		return 500 / gpMinProbes
 	}
-	return 100
+	return 250 / gpMinProbes
 }
 
 // orderFresh puts the servers that passed first, fastest first, keeps the
@@ -507,32 +614,33 @@ var edgeAddrs = []string{"104.16.132.229", "104.16.133.229", "188.114.96.3", "18
 // (a variable so tests can turn the asking off).
 var edgeChecks = 30
 
-// edgeCandidates lists edge addresses (as host:443) to check from inside
-// this run: the fixed ones and a random sample of real edges, those not
-// checked lately first, at most edgeChecks.
-func edgeCandidates(cache map[string]iranSeen, now time.Time) []string {
-	var out []string
+// edgeCandidates lists edge addresses (as host:443) to check from inside:
+// the fixed ones, and a random sample of real edges (checkIran asks those
+// not answered lately, up to edgeChecks).
+func edgeCandidates() (fixed, sampled []string) {
 	seen := map[string]bool{}
-	add := func(ip string) {
-		ep := net.JoinHostPort(ip, "443")
-		if seen[ep] {
-			return
-		}
-		seen[ep] = true
-		if c, ok := cache[ep]; ok && now.Sub(time.Unix(c.At, 0)) < iranFresh {
-			return
-		}
-		if len(out) < edgeChecks {
-			out = append(out, ep)
-		}
-	}
 	for _, ip := range edgeAddrs {
-		add(ip)
+		ep := net.JoinHostPort(ip, "443")
+		seen[ep] = true
+		fixed = append(fixed, ep)
 	}
+	for _, ip := range sampleEdges() {
+		if ep := net.JoinHostPort(ip, "443"); !seen[ep] {
+			seen[ep] = true
+			sampled = append(sampled, ep)
+		}
+	}
+	return fixed, sampled
+}
+
+// sampleEdges scans real edges at random and returns those that answered
+// a handshake (a variable so tests can do without the network).
+var sampleEdges = func() []string {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
+	var out []string
 	for _, c := range (&antiblock.Scanner{}).Scan(ctx, 120, 40) {
-		add(c.IP)
+		out = append(out, c.IP)
 	}
 	return out
 }
@@ -544,10 +652,9 @@ type reachFile struct {
 	Cloudflare []string  `json:"cloudflare"`
 }
 
-func writeReach(dir string, cache map[string]iranSeen, now time.Time) {
-	if dir == "" {
-		return
-	}
+// cleanEdges is the Cloudflare edge addresses (port 443) open from inside
+// the country by an answer younger than iranFresh: what reach.json lists.
+func cleanEdges(cache map[string]iranSeen, now time.Time) []string {
 	var open []string
 	for ep, c := range cache {
 		host, port, err := net.SplitHostPort(ep)
@@ -557,6 +664,14 @@ func writeReach(dir string, cache map[string]iranSeen, now time.Time) {
 		open = append(open, host)
 	}
 	sort.Strings(open)
+	return open
+}
+
+func writeReach(dir string, cache map[string]iranSeen, now time.Time) {
+	if dir == "" {
+		return
+	}
+	open := cleanEdges(cache, now)
 	b, err := json.MarshalIndent(reachFile{Updated: now.UTC(), Cloudflare: open}, "", "  ")
 	if err == nil {
 		os.WriteFile(filepath.Join(dir, "reach.json"), b, 0o644)

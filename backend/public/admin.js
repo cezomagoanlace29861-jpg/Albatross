@@ -65,6 +65,12 @@ async function loadStats() {
     [s.users, "Users"], [s.active_day, "Active in 24 h"], [s.active_month, "Active in 30 days"],
     [s.disabled, "Turned off"], [fmtBytes(s.total_bytes), "Total data"], [fmtTime(s.total_seconds), "Total time"],
   ];
+  // The servers accounts get: those proven healthy from inside Iran. None
+  // means every account is left with WARP, Psiphon, Tor and the edge.
+  if (s.servers) {
+    const by = s.servers.by && s.servers.by !== "none" ? `proven by ${s.servers.by.replace("+", " and ")}` : "nothing proves any now";
+    cards.push([s.servers.proven, `Servers given to accounts (${by})`]);
+  }
   $("#stats").innerHTML = cards.map(([v, k]) => `<div class="stat"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
 }
 

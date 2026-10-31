@@ -36,7 +36,7 @@ export function parseRange(h, size) {
  * offered from the same place).
  * They live under list/ in the bucket and are served at /list/<path>.
  */
-export const LIST_PATH = /^(servers\/((hot\.txt|new\.txt|fresh\.txt|all-[1-8]\.txt)(\.sealed)?|tor\.json|meta\.json|reach\.json|crowd\.json|iran\.json|sources\.txt|channels\.txt|discover\.json|own-[0-4]\.bin(\.sealed)?)|main\/update\.json|rules\/(ads\.srs|ads\.json|README\.md|LICENSE-GPL-3\.0\.txt|LICENSE-AGPL-3\.0\.txt)|tools\/(collect-linux-(amd64|arm64)|tester-install\.sh))$/;
+export const LIST_PATH = /^(servers\/((hot\.txt|new\.txt|fresh\.txt|proven\.txt|all-[1-8]\.txt)(\.sealed)?|tor\.json|meta\.json|reach\.json|crowd\.json|iran\.json|sources\.txt|channels\.txt|discover\.json|own-[0-4]\.bin(\.sealed)?)|main\/update\.json|rules\/(ads\.srs|ads\.json|README\.md|LICENSE-GPL-3\.0\.txt|LICENSE-AGPL-3\.0\.txt)|tools\/(collect-linux-(amd64|arm64)|tester-install\.sh|(sing-box|xray)-linux-(amd64|arm64)))$/;
 
 // Where the collector keeps the lists' keys (not under list/, so never
 // served as a file): see listKeys in index.js.

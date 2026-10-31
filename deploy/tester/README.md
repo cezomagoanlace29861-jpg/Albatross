@@ -14,23 +14,33 @@ apps get the list at once rather than at the next run abroad.
 
 ## Setting one up
 
-A small Ubuntu 22.04/24.04 or Debian 12 machine (x86-64 or ARM64) on an
-Iranian provider, with the ordinary internet access users have. Then:
+A computer on an Iranian network, always on, with the internet an ordinary
+user here has: **no VPN and no proxy** (the tester ignores proxy settings;
+that network is what it measures). Ubuntu or Debian on x86-64 or ARM64,
+including Ubuntu in WSL on a Windows PC. One command, as an ordinary user:
 
 ```sh
-curl -fsSL https://accounts.example.com/list/tools/tester-install.sh -o install.sh
-sudo ACCOUNT_URL=https://accounts.example.com ADMIN_USER=... ADMIN_PASSWORD=... bash install.sh
+curl -fsSL https://accounts.albatrossvpn.online/list/tools/tester-install.sh | sudo bash
 ```
 
-`ACCOUNT_URL` is the account service; `ADMIN_USER` and `ADMIN_PASSWORD` are
-its administrator (`backend/README.md`), which the tester uses to publish.
-The installer downloads the collector built by CI and the cores (sing-box,
-Xray; set `CORES_URL` to a mirror if GitHub is not reachable), and installs
-a systemd timer that runs every two hours (`EVERY=1h` changes that; `REAL`
-is how many servers a run connects through, 1500 by default).
+It asks for the account service's administrator (`backend/README.md`) and
+keeps it on this machine only (root-only file); set `ADMIN_USER` and
+`ADMIN_PASSWORD` to skip the questions. Everything it downloads comes from
+the project's own storage: the collector built by CI and the cores
+(sing-box, Xray); GitHub, or `CORES_URL`, only if those fail. It needs
+nothing from apt on a base Ubuntu (curl, python3, tar, flock).
 
-Follow a run with `journalctl -fu albatross-tester`. A run takes a few
-minutes; it tests the current `hot.txt` and the top of `fresh.txt`.
+It runs at once and then every two hours (`EVERY=3h` changes that), and
+connects through up to 600 servers a run (`REAL`). Each server that works
+carries two small downloads, so a run can use several hundred MB.
+
+- **WSL on Windows:** Windows starts it, hidden, whenever you sign in (a
+  launcher in your Startup folder, no administrator rights needed), and the
+  running tester keeps that Linux awake. Keep the PC on and awake.
+- **A Linux machine with systemd:** a service that restarts by itself.
+- **Otherwise:** a background loop, started again at boot by cron.
+
+Its log: `sudo tail -f /opt/albatross-tester/log.txt`.
 
 Several testers (different providers, mobile and fixed) can report in turn;
 the latest report wins.

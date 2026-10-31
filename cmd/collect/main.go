@@ -6,6 +6,9 @@
 // Output, in -out:
 //
 //	fresh.txt       servers from tested lists, Telegram and VPN Gate
+//	hot.txt         the best of them that passed the real test
+//	proven.txt      the hot servers proven healthy from inside Iran, which
+//	                alone reach accounts (proven.go)
 //	all-1.txt ...   everything else, best first, split into -shards files
 //	meta.json       when it ran and how many servers each file holds
 //	source-stats.json  what the real tests showed about each source (lanes.go)
@@ -273,8 +276,7 @@ func refreshHot(paths []string, out string, n int, crowd crowdStats, report, tes
 	crowdOrder(ok, passed, crowd)
 	copy(list, ok)
 	hot := hotList(list, passed, hotSize+hotSpare, crowd)
-	hot, _, _ = checkIran(hot, out, out)
-	hot = fitHot(hot, hotSize)
+	hot = fitHot(checkIran(hot, out, out).hot, hotSize)
 	if len(hot) == 0 {
 		log.Print("nothing passed; hot.txt left as it was")
 		return
@@ -336,10 +338,20 @@ type meta struct {
 	// Yield is the same count for every other source, so a link that still
 	// answers but carries nothing usable shows up too.
 	Yield map[string]int `json:"yield"`
-	// IranChecked hot addresses were tried from Globalping probes inside
-	// Iran; IranOpen of them answered there.
-	IranChecked int `json:"iran_checked"`
-	IranOpen    int `json:"iran_open"`
+	// IranCheckable hot addresses can be asked about from Globalping
+	// probes inside Iran (TCP, not reached through Cloudflare);
+	// IranChecked of them have an answer from there younger than
+	// iranFresh, and IranOpen of those answered.
+	IranCheckable int `json:"iran_checkable"`
+	IranChecked   int `json:"iran_checked"`
+	IranOpen      int `json:"iran_open"`
+	// Proven servers (proven.txt) have fresh evidence from inside Iran
+	// that they are healthy (proven.go). ProvenBy names the evidence that
+	// was current ("tester", "globalping", both joined with "+", or
+	// "none"); ProvenFrom counts the servers each kind proved.
+	Proven     int            `json:"proven"`
+	ProvenBy   string         `json:"proven_by"`
+	ProvenFrom map[string]int `json:"proven_from,omitempty"`
 	// Lanes counts the sources per lane (lanes.go).
 	Lanes map[string]int `json:"lanes,omitempty"`
 }
@@ -629,9 +641,14 @@ func main() {
 	// More than hotSize candidates, so what the probes inside the country
 	// cannot reach is left out and the list is still full.
 	hot := hotList(freshE, passed, hotSize+hotSpare, crowd)
-	hot, m.IranChecked, m.IranOpen = checkIran(hot, *prev, *out)
-	hot = fitHot(hot, hotSize)
+	ic := checkIran(hot, *prev, *out)
+	m.IranCheckable, m.IranChecked, m.IranOpen = ic.checkable, ic.fresh, ic.open
+	// What reaches accounts: the candidates proven healthy from inside.
+	proven := decideProven(ic.hot, passed, provenEvidence{now: time.Now(), tester: crowd.tester, answers: ic.answers, cdn: ic.cdn}, hotSize)
+	m.Proven, m.ProvenBy, m.ProvenFrom = len(proven.list), proven.by, proven.from
+	hot = fitHot(ic.hot, hotSize)
 	write("hot.txt", links(hot))
+	write("proven.txt", links(proven.list))
 	if *prev != "" {
 		write("new.txt", newList(fresh, last.fresh, last.new, newSize))
 	}
