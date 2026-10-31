@@ -286,10 +286,9 @@ export function cleanEntry(e) {
  * keeps the pool, and so each account's slice, the same all day.
  */
 export async function subPool(env, pick = Math.random) {
-  const hot = await listFile(env, "hot.txt");
-  const entries = pool(hot, "", SUB_MIN, pick, cleanEntry);
-  if (entries.length >= SUB_MIN) return entries;
-  return pool(hot, await listFile(env, "fresh.txt"), SUB_MIN, pick, cleanEntry);
+  // Only servers the collector connected through and measured (hot.txt):
+  // no top-up from lists nobody has tested.
+  return pool(await listFile(env, "hot.txt"), "", SUB_MIN, pick, cleanEntry);
 }
 
 /**
@@ -297,11 +296,8 @@ export async function subPool(env, pick = Math.random) {
  * subscription's, in every protocol the app reads, the links as they came.
  */
 export async function appPool(env, pick = Math.random) {
-  const hot = await listFile(env, "hot.txt");
-  const all = () => true;
-  const entries = pool(hot, "", SUB_MIN, pick, (e) => e, all);
-  if (entries.length >= SUB_MIN) return entries;
-  return pool(hot, await listFile(env, "fresh.txt"), SUB_MIN, pick, (e) => e, all);
+  // Only servers the collector connected through and measured (hot.txt).
+  return pool(await listFile(env, "hot.txt"), "", SUB_MIN, pick, (e) => e, () => true);
 }
 
 // ---------- Each account's slice ----------
@@ -448,7 +444,8 @@ export function slice(entries, seed, cap = SLICE_MAX, base = SLICE_BASE) {
 // best-tested servers holds few of them, so each account also gets its own
 // share of them from the wider lists, the same all day.
 export const SLICE_RESIST = 60;
-const RESIST_LISTS = ["hot.txt", "fresh.txt", "all-1.txt"];
+// Tested servers only: the collector connected through each and measured it.
+const RESIST_LISTS = ["hot.txt"];
 
 /** An account's share of the servers reached through the CDN, apart from those it already has. */
 export async function resistantFor(env, userId, t, have, n = SLICE_RESIST) {
