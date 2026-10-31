@@ -14,16 +14,17 @@
 # ADMIN_PASSWORD are set. Everything it downloads comes from the project's
 # own storage; GitHub is only the fallback for the cores. Optional:
 #   ACCOUNT_URL=...  the account service (default: the project's)
-#   EVERY=2h         how often to test (s, m or h)
-#   REAL=600         how many servers to connect through per run
+#   EVERY=6h         how often to test (s, m or h)
+#   REAL=450         how many servers to connect through per run (the hot list)
+#   SPEED_BYTES=...  bytes each test download carries (default 1 MiB: lines here are metered)
 #   CORES_URL=...    another place for the cores' release archives
 set -euo pipefail
 # What it measures is this network as it is: never through a VPN or proxy.
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 ACCOUNT_URL="${ACCOUNT_URL:-https://accounts.albatrossvpn.online}"
 ACCOUNT_URL="${ACCOUNT_URL%/}"
-EVERY="${EVERY:-2h}"
-REAL="${REAL:-600}"
+EVERY="${EVERY:-6h}"
+REAL="${REAL:-450}"
 SINGBOX_VERSION="${SINGBOX_VERSION:-1.14.4}"
 XRAY_VERSION="${XRAY_VERSION:-26.10.21}"
 dir=/opt/albatross-tester
@@ -108,6 +109,7 @@ cores/sing-box version > /dev/null 2>&1 || fail "the sing-box core does not run 
   printf 'ADMIN_USER=%q\n' "$ADMIN_USER"
   printf 'ADMIN_PASSWORD=%q\n' "$ADMIN_PASSWORD"
   printf 'REAL=%q\n' "$REAL"
+  [ -n "${SPEED_BYTES:-}" ] && printf 'SPEED_BYTES=%q\n' "$SPEED_BYTES"
 } > ./env)
 
 # One run (deploy/tester/run.sh in the repository; CI checks the two match).
@@ -125,6 +127,9 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 # The settings install.sh wrote, shell-quoted so any password works.
 if [ -f ./env ]; then . ./env; fi
 : "${ACCOUNT_URL:?}" "${ADMIN_USER:?}" "${ADMIN_PASSWORD:?}"
+# FULL=1 (the first run after installing): every server the collector
+# found, not only hot.txt.
+[ "${FULL:-0}" = 1 ] && REAL=100000
 account="${ACCOUNT_URL%/}"
 work=work
 rm -rf "$work" && mkdir -p "$work/in"
@@ -137,12 +142,18 @@ token="$(curl -fsS --retry 3 --max-time 60 -H 'Content-Type: application/json' -
 [ -n "$token" ] || { echo "could not sign in to the account service" >&2; exit 1; }
 (umask 077 && curl -fsS --retry 3 --max-time 60 -H "Authorization: Bearer $token" "$account/api/v1/admin/listkeys" > "$work/keys.json")
 
-# The candidates: whatever the collector abroad found, hot first.
-for f in hot.txt fresh.txt; do
+# The candidates: whatever the collector abroad found, hot first; the top
+# of fresh.txt only when a run tests more than hot.txt holds (450), which
+# saves a metered line the download.
+lists="hot.txt"
+[ "${REAL:-450}" -gt 450 ] && lists="hot.txt fresh.txt"
+for f in $lists; do
   curl -fsS --retry 3 --max-time 300 -o "$work/in/$f.sealed" "$account/list/servers/$f.sealed" || echo "no $f.sealed to test yet" >&2
 done
-SING_BOX="$PWD/cores/sing-box" XRAY="$PWD/cores/xray" ./collect -hot-from "$work/in/hot.txt.sealed,$work/in/fresh.txt.sealed" \
-  -keys "$work/keys.json" -real "${REAL:-600}" -report "$work/iran.json" -tester iran -out "$work"
+from="$work/in/hot.txt.sealed"
+[ -s "$work/in/fresh.txt.sealed" ] && from="$from,$work/in/fresh.txt.sealed"
+SING_BOX="$PWD/cores/sing-box" XRAY="$PWD/cores/xray" ./collect -hot-from "$from" \
+  -keys "$work/keys.json" -real "${REAL:-450}" -speed-bytes "${SPEED_BYTES:-1048576}" -report "$work/iran.json" -tester iran -out "$work"
 
 put() { # name file
   curl -fsS --retry 3 --max-time 300 -X PUT -H "Authorization: Bearer $token" -H 'Content-Type: application/octet-stream' \
@@ -167,7 +178,9 @@ cd $dir
 exec 9> $dir/loop.lock
 flock -n 9 || exit 0
 while true; do
-  { date -u '+%F %T UTC: run'; ./run.sh; } >> log.txt 2>&1 || true
+  # The first run tests every server the collector found; the rest, hot.txt.
+  full=1; [ -f first.done ] && full=0
+  { date -u '+%F %T UTC: run'; FULL=\$full ./run.sh && touch first.done; } >> log.txt 2>&1 || true
   tail -n 3000 log.txt > log.tmp && mv log.tmp log.txt
   sleep $every
 done

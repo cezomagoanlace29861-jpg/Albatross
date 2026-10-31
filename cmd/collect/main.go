@@ -374,6 +374,7 @@ func main() {
 	crowdPath := flag.String("crowd", "", "comma-separated reports about servers from inside the country (list/servers/crowd.json, iran.json): confirmed servers first in hot.txt, failing ones left out")
 	report := flag.String("report", "", "with -hot-from: write this run's results in the report form to this file (for a tester inside the country, deploy/tester)")
 	tester := flag.String("tester", "", "the tester's name in -report (for example iran)")
+	speedB := flag.Int("speed-bytes", speedBytes, "bytes each download of the real test carries (at least 256 KiB); a tester on a metered line passes less")
 	discover := flag.String("discover", "", "find more sources (GitHub search with GITHUB_TOKEN, mentions in known lists and channels) and write sources.txt, channels.txt and discover.json to this directory; nothing else is done")
 	discoverPrev := flag.String("discover-prev", "", "with -discover: the directory holding the previous run's sources.txt, channels.txt and discover.json, checked again and kept while they answer")
 	discoverMinutes := flag.Int("discover-minutes", 40, "with -discover: stop looking after this many minutes and write what was found")
@@ -381,6 +382,9 @@ func main() {
 	extraTG := flag.String("channels", "", "a discovered channels.txt to read beside the shipped lists")
 	openPath := flag.String("open", "", "print the sealed list in this file opened with the keys in -keys (for the copy the build bundles in the app); nothing else is done")
 	flag.Parse()
+	if *speedB >= 256<<10 {
+		speedBytes = *speedB
+	}
 	if *openPath != "" {
 		text, err := openList(*openPath, readListKeys(*keysIn))
 		if err != nil {
