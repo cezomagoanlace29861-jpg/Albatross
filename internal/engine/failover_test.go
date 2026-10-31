@@ -348,3 +348,52 @@ func TestLastResortOnlyWhenNothingElse(t *testing.T) {
 		}
 	}
 }
+
+// TestAutomaticGroupKeepsTheEdge checks that a working edge joins an
+// automatic group of another country, and stays out when a country or a
+// protocol is chosen.
+func TestAutomaticGroupKeepsTheEdge(t *testing.T) {
+	e, err := New(Options{DataDir: t.TempDir(), Sources: []sources.Source{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.pool.Close()
+	now := time.Now()
+	add := func(name, country, source string, delay int) {
+		link := fmt.Sprintf("vless://b831381d-6324-4d53-ad4f-8cda48b30811@%s.example:443?security=tls&type=tcp#%s", name, name)
+		n, err := node.ParseLink(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.good[node.Key64(n.Key())] = &Server{Key: n.Key(), Link: link, Name: name, Country: country, Source: source, Delay: delay, LastOK: now, TestedAt: now}
+	}
+	for i := 0; i < 8; i++ {
+		add(fmt.Sprintf("in%d", i), "IN", "", 100+i)
+	}
+	add("edge1", "US", "edge", 250)
+	hasEdge := func(g []*Server) bool {
+		for _, s := range g {
+			if s.Source == "edge" {
+				return true
+			}
+		}
+		return false
+	}
+	g := e.pickGroup("", "", nil, groupSize)
+	if !hasEdge(g) || len(g) != groupSize {
+		t.Fatalf("an automatic group of %d should keep the edge", len(g))
+	}
+	if g[0].Name != "in0" {
+		t.Fatalf("the group starts with %s, want the fastest", g[0].Name)
+	}
+	if g := e.pickGroup("", "IN", nil, groupSize); !hasEdge(g) {
+		t.Fatal("a reconnect in the same country should keep the edge too")
+	}
+	if hasEdge(e.pickGroup("IN", "", nil, groupSize)) {
+		t.Fatal("a chosen country must not get the edge")
+	}
+	e.settings.Protocol = "vless"
+	if hasEdge(e.pickGroup("", "", nil, groupSize)) {
+		t.Fatal("a chosen protocol must not get the edge")
+	}
+}
